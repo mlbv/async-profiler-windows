@@ -1,0 +1,36 @@
+Microsoft Detours v4.0.1
+Repository: https://github.com/microsoft/Detours
+Commit: e4bfd6b03e50de46b47abfbd1e46b384f0c5f833
+License: MIT (LICENSE.md)
+
+Source files:
+src/disasm.cpp SHA256 1084f5e0d3b236a71c46f2c98ff6b44cd2af35b6a100bc823ec33e34e26b3208
+src/detours.h SHA256 d9870cd2815958a335ff041c4d53d1951a8b7014a84d1c6e1b689b91607e09c9
+
+Local adaptations for the checked Windows x86-64 adapter:
+- Invalid instructions return NULL and set ERROR_INVALID_DATA, instead of
+  returning a misleading one-byte success without copying the opcode.
+- rel32 overflow reports an unrepresentable relocation, rather than extra=0.
+- Widened short branches reject destinations outside signed rel32 range.
+- Legacy MSVC typedef workarounds apply only to actual old MSVC compilers.
+- The unused DetourSetCodeModule wrapper is omitted from this decoder-only
+  build; the adapter permanently disables indirect-target dereferences.
+- The checked adapter relocates XBEGIN itself, because this source pin copies
+  its rel32 abort target as a MOV immediate, and rewrites LOOPcc/JRCXZ, whose
+  rel8-only forms the pin cannot widen.
+
+- The x64 EVEX dispatch accepts scalar-double 0F/F2/W1 MOVSD memory
+  load/store (10/11), ADDSD (58), MULSD (59), and 0F38/66/W1
+  VFMADD132SD/213SD/231SD (99/A9/B9), with P2=08. Memory MOVSD requires
+  reserved vvvv=1111. Original EVEX bytes are preserved; the existing ModRM/SIB
+  copier and checked RIP-relative relocation handle the payload. The adapter
+  rejects all preceding legacy/REX prefixes. Other valid EVEX forms remain
+  unsupported; this restriction is not a general legality test.
+  References: Intel SDM Vol. 2A, EVEX encoding and compressed displacement;
+  Vol. 2C, VFMADD132SD/VFMADD213SD/VFMADD231SD; Intel XED
+  datafiles/avx512f/avx512-foundation-isa.xed.txt (VMOVSD, VADDSD, VMULSD).
+  https://github.com/intelxed/xed
+
+APX and all other EVEX profiles remain unsupported. This is a bounded decoder
+and relocator, not a software probe engine or a complete instruction-effects
+classifier.

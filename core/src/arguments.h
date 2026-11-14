@@ -1,0 +1,361 @@
+/*
+ * Copyright The async-profiler authors
+ * Copyright 2026 movblock
+ * SPDX-License-Identifier: Apache-2.0
+ * Modified for Windows x86-64.
+ */
+
+#ifndef _ARGUMENTS_H
+#define _ARGUMENTS_H
+
+#include <stddef.h>
+#include <stdint.h>
+#include <string>
+#include <vector>
+#ifdef _WIN32
+#include <memory>
+#include "windowsOutput.h"
+#endif
+
+
+const int64_t DEFAULT_INTERVAL = 10000000;      // 10 ms
+const int64_t DEFAULT_ALLOC_INTERVAL = 524287;  // 512 KiB
+const int64_t DEFAULT_LOCK_INTERVAL = 10000;    // 10 us
+const int64_t DEFAULT_PROC_INTERVAL = 30;       // 30 seconds
+const int DEFAULT_JSTACKDEPTH = 2048;
+
+const char* const EVENT_CPU        = "cpu";
+const char* const EVENT_ALLOC      = "alloc";
+const char* const EVENT_NATIVEMEM  = "nativemem";
+const char* const EVENT_LOCK       = "lock";
+const char* const EVENT_NATIVELOCK = "nativelock";
+const char* const EVENT_WALL       = "wall";
+const char* const EVENT_CTIMER     = "ctimer";
+const char* const EVENT_ITIMER     = "itimer";
+
+#define SHORT_ENUM __attribute__((__packed__))
+
+enum SHORT_ENUM Action {
+    ACTION_NONE,
+    ACTION_START,
+    ACTION_RESUME,
+    ACTION_STOP,
+    ACTION_DUMP,
+    ACTION_STATUS,
+    ACTION_METRICS,
+    ACTION_LIST,
+    ACTION_VERSION,
+    ACTION_RESOLVE
+};
+
+enum SHORT_ENUM Counter {
+    COUNTER_SAMPLES,
+    COUNTER_TOTAL
+};
+
+enum Style {
+    STYLE_SIMPLE       = 0x1,
+    STYLE_DOTTED       = 0x2,
+    STYLE_NORMALIZE    = 0x4,
+    STYLE_SIGNATURES   = 0x8,
+    STYLE_ANNOTATE     = 0x10,
+    STYLE_LIB_NAMES    = 0x20,
+    STYLE_NO_SEMICOLON = 0x40
+};
+
+// Whenever enum changes, update SETTING_CSTACK in FlightRecorder
+enum SHORT_ENUM CStack {
+    CSTACK_DEFAULT,  // use perf_event_open stack if available or Frame Pointer links otherwise
+    CSTACK_NO,       // do not collect native frames
+    CSTACK_FP,       // walk stack using Frame Pointer links
+    CSTACK_DWARF,    // use DWARF unwinding info from .eh_frame section
+    CSTACK_VM        // unwind using HotSpot VMStructs
+};
+
+enum SHORT_ENUM Clock {
+    CLK_DEFAULT,
+    CLK_TSC,
+    CLK_MONOTONIC
+};
+
+enum SHORT_ENUM Output {
+    OUTPUT_NONE,
+    OUTPUT_TEXT,
+    OUTPUT_COLLAPSED,
+    OUTPUT_FLAMEGRAPH,
+    OUTPUT_TREE,
+    OUTPUT_JFR,
+    OUTPUT_OTLP
+};
+
+enum JfrOption {
+    NO_SYSTEM_INFO  = 0x1,
+    NO_SYSTEM_PROPS = 0x2,
+    NO_NATIVE_LIBS  = 0x4,
+    NO_CPU_LOAD     = 0x8,
+    NO_HEAP_SUMMARY = 0x10,
+
+    IN_MEMORY       = 0x100,
+
+    JFR_SYNC_OPTS   = NO_SYSTEM_INFO | NO_SYSTEM_PROPS | NO_NATIVE_LIBS | NO_CPU_LOAD | NO_HEAP_SUMMARY
+};
+
+// Keep this in sync with JfrSync.java
+enum EventCategory {
+    EC_CPU,         // jdk.ExecutionSample
+    EC_ALLOC,       // jdk.ObjectAllocationInNewTLAB, jdk.ObjectAllocationOutsideTLAB
+    EC_LOCK,        // jdk.JavaMonitorEnter, jdk.ThreadPark
+    EC_WALL,        // profiler.WallClockSample
+    EC_NATIVEMEM,   // profiler.Malloc, profiler.Free
+    EC_NATIVELOCK,  // profiler.NativeLock
+    EC_TRACE,       // jdk.MethodTrace
+    EC_SPAN,        // profiler.Span
+    EC_CATEGORIES
+};
+
+struct StackWalkFeatures {
+    unsigned short stats         : 1;  // collect stack walking duration statistics
+    unsigned short jnienv        : 1;  // verify JNIEnv* obtained using VMStructs
+    unsigned short agct          : 1;  // force usage of AsyncGetCallTrace instead of VMStructs
+    unsigned short mixed         : 1;  // mixed stack traces with Java and native frames interleaved
+    unsigned short vtable_target : 1;  // show receiver classes of vtable/itable stubs
+    unsigned short comp_task     : 1;  // display current compilation task for JIT threads
+    unsigned short pc_addr       : 1;  // record exact PC address for each sample
+    unsigned short _padding      : 9;  // pad structure to 16 bits
+};
+
+
+struct Multiplier {
+    char symbol;
+    int64_t multiplier;
+};
+
+constexpr Multiplier NANOS[] = {{'n', 1}, {'u', 1000}, {'m', 1000000}, {'s', 1000000000}, {0, 0}};
+constexpr Multiplier BYTES[] = {{'b', 1}, {'k', 1024}, {'m', 1048576}, {'g', 1073741824}, {0, 0}};
+constexpr Multiplier SECONDS[] = {{'s', 1}, {'m', 60}, {'h', 3600}, {'d', 86400}, {0, 0}};
+constexpr Multiplier UNIVERSAL[] = {{'n', 1}, {'u', 1000}, {'m', 1000000}, {'s', 1000000000}, {'b', 1}, {'k', 1024}, {'g', 1073741824}, {0, 0}};
+
+class Error {
+  private:
+    const char* _message;
+
+  public:
+    static const Error OK;
+
+    explicit Error(const char* message) : _message(message) {
+    }
+
+    const char* message() {
+        return _message;
+    }
+
+    operator bool() {
+        return _message != NULL;
+    }
+};
+
+
+class Arguments {
+  private:
+    char* _buf;
+    bool _shared;
+    std::string _expanded_file;
+#ifdef _WIN32
+    std::shared_ptr<WindowsProfiler::OutputFiles> _output_files;
+    const char* _file_error;
+#endif
+
+    const char* expandFilePattern(const char* pattern);
+
+    bool parseRateLimit(char* str);
+
+    static long long hash(const char* arg);
+    static Output detectOutputFormat(const char* file);
+    static int parseTimeout(const char* str);
+
+  public:
+    Action _action;
+    Counter _counter;
+    const char* _event;
+    std::vector<const char*> _trace;
+    int _timeout;
+    int _loop;
+    size_t _mem_limit;
+    int64_t _interval;
+    int64_t _alloc;
+    int64_t _nativemem;
+    int64_t _lock;
+    int64_t _nativelock;
+    int64_t _wall;
+    int64_t _proc;
+    bool _all;
+    int _jstackdepth;
+    int _truncated_stack_depth;
+    int _signal;
+    const char* _file;
+#ifdef _WIN32
+    const char* _filebase;
+    const char* _fileresult;
+#endif
+    const char* _log;
+    const char* _loglevel;
+    const char* _unknown_arg;
+    bool _filter_enabled;
+    std::vector<const char*> _threads_include;
+    std::vector<const char*> _threads_exclude;
+    std::vector<const char*> _include;
+    std::vector<const char*> _exclude;
+    unsigned char _mcache;
+    bool _preloaded;
+    bool _quiet;
+    bool _threads;
+    bool _sched;
+    bool _record_cpu;
+    bool _tlab;
+    bool _live;
+    bool _nofree;
+    bool _nobatch;
+    bool _nostop;
+    bool _alluser;
+    bool _fdtransfer;
+    const char* _fdtransfer_path;
+    int _target_cpu;
+    int _style;
+    StackWalkFeatures _features;
+    CStack _cstack;
+    Clock _clock;
+    Output _output;
+    int _rate_limit[EC_CATEGORIES];
+    int64_t _chunk_size;
+    int64_t _chunk_time;
+    const char* _jfr_sync;
+    int _jfr_options;
+    int _dump_traces;
+    int _dump_flat;
+    unsigned int _file_num;
+    const char* _begin;
+    const char* _end;
+    // FlameGraph parameters
+    const char* _title;
+    double _minwidth;
+    bool _reverse;
+    bool _inverted;
+
+    Arguments() :
+        _buf(NULL),
+        _shared(false),
+#ifdef _WIN32
+        _output_files(std::make_shared<WindowsProfiler::OutputFiles>()),
+        _file_error(NULL),
+#endif
+        _action(ACTION_NONE),
+        _counter(COUNTER_SAMPLES),
+        _event(NULL),
+        _trace(),
+        _timeout(0),
+        _loop(0),
+        _mem_limit(0),
+        _interval(0),
+        _alloc(-1),
+        _nativemem(-1),
+        _lock(-1),
+        _nativelock(-1),
+        _wall(-1),
+        _proc(-1),
+        _all(false),
+        _jstackdepth(DEFAULT_JSTACKDEPTH),
+        _truncated_stack_depth(DEFAULT_JSTACKDEPTH),
+        _signal(0),
+        _file(NULL),
+#ifdef _WIN32
+        _filebase(NULL),
+        _fileresult(NULL),
+#endif
+        _log(NULL),
+        _loglevel(NULL),
+        _unknown_arg(NULL),
+        _filter_enabled(false),
+        _threads_include(),
+        _threads_exclude(),
+        _include(),
+        _exclude(),
+        _mcache(0),
+        _preloaded(false),
+        _quiet(false),
+        _threads(false),
+        _sched(false),
+        _record_cpu(false),
+        _tlab(false),
+        _live(false),
+        _nofree(false),
+        _nobatch(false),
+        _nostop(false),
+        _alluser(false),
+        _fdtransfer(false),
+        _fdtransfer_path(NULL),
+        _target_cpu(-1),
+        _style(0),
+        _features{},
+        _cstack(CSTACK_DEFAULT),
+        _clock(CLK_DEFAULT),
+        _output(OUTPUT_NONE),
+        _chunk_size(100 * 1024 * 1024),
+        _chunk_time(3600),
+        _jfr_sync(NULL),
+        _jfr_options(0),
+        _dump_traces(0),
+        _dump_flat(0),
+        _file_num(0),
+        _begin(NULL),
+        _end(NULL),
+        _title(NULL),
+        _minwidth(0),
+        _reverse(false),
+        _inverted(false)
+    {
+        for (int i = 0; i < EC_CATEGORIES; i++) _rate_limit[i] = -1;
+    }
+
+    ~Arguments();
+
+    void save();
+
+    Error parse(const char* args);
+
+    const char* file();
+#ifdef _WIN32
+    int openOutputFile(const char* filename, int flags);
+    bool reportOutputFile(const char* filename);
+    bool reportOutputError(const char* message);
+    Error fileError() const { return Error(_file_error); }
+#endif
+
+    bool hasTemporaryLog() const;
+
+    bool hasOutputFile() const {
+        return _file != NULL && _action != ACTION_RESOLVE &&
+            (_action == ACTION_STOP || _action == ACTION_DUMP ? _output != OUTPUT_JFR : _action >= ACTION_STATUS);
+    }
+
+    bool hasOption(JfrOption option) const {
+        return (_jfr_options & option) != 0;
+    }
+
+    int eventMask() const {
+        return (_event      != NULL ? 1 << EC_CPU        : 0) |
+               (_alloc      >= 0    ? 1 << EC_ALLOC      : 0) |
+               (_lock       >= 0    ? 1 << EC_LOCK       : 0) |
+               (_wall       >= 0    ? 1 << EC_WALL       : 0) |
+               (_nativemem  >= 0    ? 1 << EC_NATIVEMEM  : 0) |
+               (_nativelock >= 0    ? 1 << EC_NATIVELOCK : 0) |
+               (!_trace.empty()     ? 1 << EC_TRACE      : 0);
+    }
+
+    static bool isUrl(const char* file);
+
+    static int64_t parseUnits(const char* str, const Multiplier* multipliers);
+};
+
+extern Arguments _global_args;
+
+#endif // _ARGUMENTS_H

@@ -1,0 +1,6 @@
+/*
+ * Copyright 2026 movblock
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#define ASPROF_SOURCE_ROOT "@SOURCE_ROOT@"
+#define ASPROF_HELPER_ROOT "@HELPER_ROOT@/"

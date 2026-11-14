@@ -1,0 +1,4 @@
+# The default is asyncProfiler.dll beside asprof.exe.
+# Override with --libpath PATH, ASYNC_PROFILER_DLL, or this property.
+# Use forward slashes in property paths.
+# agent=C:/profiling/asyncProfiler.dll

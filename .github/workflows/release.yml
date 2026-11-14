@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*-windows.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2025
+    env:
+      MINGW_ARCHIVE: x86_64-16.2.0-release-posix-seh-ucrt-rt_v14-rev1.7z
+      MINGW_URL: https://github.com/niXman/mingw-builds-binaries/releases/download/16.2.0-rt_v14-rev1/x86_64-16.2.0-release-posix-seh-ucrt-rt_v14-rev1.7z
+      MINGW_SHA256: 26788998d615856a915e1eeacb0854fce87bc608fa9a0c16f96bcbfdcf3415c0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check version
+        run: |
+          $version = [regex]::Match((Get-Content -Raw core/CMakeLists.txt), 'set\(PROFILER_VERSION "([^"]+)"\)').Groups[1].Value
+          if ("v$version" -cne $env:GITHUB_REF_NAME) { throw "Tag $env:GITHUB_REF_NAME does not match PROFILER_VERSION $version." }
+
+      - id: mingw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/mingw64
+          key: mingw-builds-${{ env.MINGW_SHA256 }}
+
+      - name: Download MinGW-w64
+        if: steps.mingw-cache.outputs.cache-hit != 'true'
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP $env:MINGW_ARCHIVE
+          Invoke-WebRequest -Uri $env:MINGW_URL -OutFile $archive
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash -ne $env:MINGW_SHA256) { throw "$env:MINGW_ARCHIVE does not match its SHA-256." }
+          7z x $archive "-o$env:RUNNER_TEMP" -y -bso0 -bsp0
+
+      - name: Build
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -JdkHome $env:JAVA_HOME_25_X64 -ClangCxx 'C:\Program Files\LLVM\bin\clang++.exe' -MingwRoot "$env:RUNNER_TEMP\mingw64" -Package
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME build/asprof-windows.zip build/asprof-windows-debug.zip --verify-tag --prerelease --notes-from-tag
